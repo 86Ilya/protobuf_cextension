@@ -3,9 +3,9 @@ from setuptools import setup, Extension
 module1 = Extension("pb",
                     sources=["pb.c", "deviceapps.pb-c.c"],
                     extra_compile_args=["-g"],
-                    libraries=["protobuf-c"],
+                    libraries=["protobuf-c", "z"],
                     library_dirs=["/usr/lib"],
-                    include_dirs=["/usr/include/google/protobuf-c/"],
+                    include_dirs=["/usr/include/google/protobuf-c/", "/usr/include/zlib/"],
                     )
 
 setup(name="pb",

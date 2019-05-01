@@ -2,8 +2,9 @@
 import os
 import unittest
 import struct
-
 import pb
+
+import gzip
 import deviceapps_pb2
 
 MAGIC = 0xFFFFFFFF
@@ -31,7 +32,7 @@ class TestPB(unittest.TestCase):
         self.assertTrue(bytes_written > 0)
 
         unpacked = deviceapps_pb2.DeviceApps()
-        with open(TEST_FILE, 'r') as f:
+        with gzip.open(TEST_FILE, 'r') as f:
             while True:
                 buf = f.read(4)  # Ищем магическую последовательность
                 if not buf:
@@ -66,4 +67,3 @@ class TestPB(unittest.TestCase):
         pb.deviceapps_xwrite_pb(self.deviceapps, TEST_FILE)
         for i, d in enumerate(pb.deviceapps_xread_pb(TEST_FILE)):
             self.assertEqual(d, self.deviceapps[i])
-

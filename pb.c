@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include "deviceapps.pb-c.h"
+#include <zlib.h>
 
 #define MAGIC  0xFFFFFFFF
 #define DEVICE_APPS_TYPE 1
@@ -18,7 +19,6 @@ typedef struct pbheader_s {
 
 static DeviceApps get_message_from_pyobj(PyObject *obj){
     PyObject *py_device, *py_type, *py_id, *py_lat, *py_lon, *py_apps;
-    //PyListObject* py_apps;
 
     DeviceApps msg = DEVICE_APPS__INIT;
     DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
@@ -91,7 +91,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     if (!PyIter_Check(obj)){
         obj = PyObject_GetIter(obj);
     } 
-    FILE *fout = fopen(path, "w");
+    gzFile fout = gzopen(path, "w");
 
     while (true) {
       PyObject *next = PyIter_Next(obj);
@@ -109,8 +109,8 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
       header.type = DEVICE_APPS_TYPE; 
       header.length = len;
 
-      fwrite(&header, sizeof(pbheader_t), 1, fout);
-      fwrite(buf, len, 1, fout);
+      gzwrite(fout, &header, sizeof(pbheader_t));
+      gzwrite(fout, buf, len);
       total_length += len;
 
       //Py_DECREF();
@@ -122,9 +122,8 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     }
 
     printf("Write to: %s\n", path);
-    // TODO gzip file
-    fclose(fout);
-    return  Py_BuildValue("i", total_length); 
+    gzclose(fout);
+    return Py_BuildValue("i", total_length); 
 }
 
 // Unpack only messages with type == DEVICE_APPS_TYPE
