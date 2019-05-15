@@ -63,9 +63,9 @@ static DeviceApps get_message_from_pyobj(PyObject *obj){
     }
 
     msg.n_apps = (size_t)PyList_Size(py_apps);
-    msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+    msg.apps = (uint32_t *) malloc(sizeof(uint32_t) * msg.n_apps);
     
-    for(i=0; i<=msg.n_apps; i++){
+    for(i=0; i<msg.n_apps; i++){
        msg.apps[i] = (uint32_t) PyInt_AsLong(PyList_GetItem(py_apps, i)); 
     }
 
@@ -91,7 +91,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     if (!PyIter_Check(obj)){
         obj = PyObject_GetIter(obj);
     } 
-    gzFile fout = gzopen(path, "w");
+    gzFile fout = gzopen(path, "wb");
 
     while (true) {
       PyObject *next = PyIter_Next(obj);
@@ -104,7 +104,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
       len = device_apps__get_packed_size(&msg);
 
       buf = malloc(len);
-      device_apps__pack(&msg, buf);
+      device_apps__pack(&msg, (uint8_t *)buf);
 
       header.type = DEVICE_APPS_TYPE; 
       header.length = len;
