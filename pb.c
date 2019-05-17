@@ -17,31 +17,128 @@ typedef struct pbheader_s {
 } pbheader_t;
 #define PBHEADER_INIT {MAGIC, 0, 0}
 
-static DeviceApps get_message_from_pyobj(PyObject *obj){
-    PyObject *py_device, *py_type, *py_id, *py_lat, *py_lon, *py_apps;
 
+// Read iterator of Python dicts
+// Pack them to DeviceApps protobuf and write to file with appropriate header
+// Return number of written bytes as Python integer
+static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
+    size_t i;
+    char *device_id = NULL, *device_type = NULL;
+    const char *path;
+    void *buf = NULL;
+    uint32_t len, total_length=0;
+    PyObject *obj = NULL, *py_device = NULL, *py_type = NULL,
+             *py_id = NULL, *py_lat = NULL, *py_lon = NULL,
+             *py_app = NULL, *py_apps = NULL, *messages = NULL, *next_message = NULL;
+    gzFile fout = NULL;
     DeviceApps msg = DEVICE_APPS__INIT;
     DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
+    pbheader_t header = PBHEADER_INIT;
 
-    unsigned i;
-    char *device_id, *device_type;
+    if (!PyArg_ParseTuple(args, "Os", &obj, &path))
+        return NULL;
 
-    py_device = PyDict_GetItemString(obj, "device"); // PyDict
-    py_type = PyDict_GetItemString(py_device, "type"); // char*
-    py_id = PyDict_GetItemString(py_device, "id"); // long
-    py_lat = PyDict_GetItemString(obj, "lat"); // double
-    py_lon = PyDict_GetItemString(obj, "lon"); // double
-    py_apps = PyDict_GetItemString(obj, "apps"); // list of int
+    messages = PyObject_GetIter(obj);
+	if (!messages) {
+		PyErr_SetString(PyExc_TypeError, "messages must be iterable");
+		goto error;
+	}
 
-    device_type = PyString_AsString(py_type);
-    device_id = PyString_AsString(py_id);
+    fout = gzopen(path, "wb");
 
-    device.has_id = 1;
-    device.id.data = (uint8_t*)device_id;
-    device.id.len = strlen(device_id);
-    device.has_type = 1;
-    device.type.data = (uint8_t*)device_type;
-    device.type.len = strlen(device_type);
+    while (true) {
+      next_message = PyIter_Next(messages);
+      if (!next_message) {
+        // nothing left in the iterator
+        break;
+      }
+
+    // starting to parse python variables
+    py_device = PyDict_GetItemString(next_message, "device"); // PyDict
+    if (py_device == NULL || !PyDict_Check(py_device)) {
+        PyErr_SetString(PyExc_TypeError, "Device should be dict");
+        goto error;
+    }
+
+    // py_type -> device_type is char*
+    if ((py_type = PyDict_GetItemString(py_device, "type"))){
+        device_type = PyString_AsString(py_type);
+        if (!device_type) {
+            goto error;
+        }
+        // Set device type
+        device.has_type = 1;
+        device.type.data = (uint8_t*)device_type;
+        device.type.len = strlen(device_type);
+
+    }
+    else{
+        // If device type doesn't exist
+        device.has_type = 0;
+    }
+
+    // py_id converts to device_id char* 
+    if ((py_id = PyDict_GetItemString(py_device, "id"))){
+        device_id = PyString_AsString(py_id);
+        if (!device_id) {
+            goto error;
+        }
+        device.id.data = (uint8_t*)device_id;
+        device.id.len = strlen(device_id);
+        device.has_id = 1;
+    }
+    else{
+        // If device id doesn't exist
+        device.has_id = 0;
+        }
+    
+    // py_lat converts to float 
+    if((py_lat = PyDict_GetItemString(next_message, "lat"))){
+        msg.has_lat = true;
+        msg.lat = PyFloat_AsDouble(py_lat);
+        if (msg.lat == -1 && PyErr_Occurred()){
+            goto error;
+        }
+    }
+    else{
+        msg.has_lat = false;
+    }
+    
+    // py_lon converts to float 
+    if((py_lon = PyDict_GetItemString(next_message, "lon"))){
+        msg.has_lon = true;
+        msg.lon = PyFloat_AsDouble(py_lon);
+        if (msg.lon == -1 && PyErr_Occurred()){
+            goto error;
+        }
+    }
+    else{
+        msg.has_lon = false;
+    }
+
+    // py_apps converts to list of ints
+    if((py_apps = PyDict_GetItemString(next_message, "apps"))){
+        if (!PyList_Check(py_apps)) {
+                    PyErr_SetString(PyExc_TypeError, "Device apps should be list");
+                    goto error;
+            }
+            msg.n_apps = (size_t)PyList_Size(py_apps);
+            msg.apps = (uint32_t *) malloc(sizeof(uint32_t) * msg.n_apps);
+            
+            for(i=0; i<msg.n_apps; i++){
+               py_app = PyList_GetItem(py_apps, i);
+               // py_app converts to int
+               if(!PyInt_Check(py_app)){
+                    PyErr_SetString(PyExc_TypeError, "app should be of type int");
+                    goto error;
+               }
+               msg.apps[i] = (uint32_t) PyInt_AsLong(py_app); 
+               if(msg.apps[i] == -1 && PyErr_Occurred()){
+                   goto error;
+               }
+            }
+    }
+
     msg.device = &device;
     
     if(py_lat != NULL){
@@ -51,8 +148,6 @@ static DeviceApps get_message_from_pyobj(PyObject *obj){
     else{
         msg.has_lat = false;
     }
-    
-
     
     if(py_lon != NULL){
         msg.has_lon = true;
@@ -69,61 +164,47 @@ static DeviceApps get_message_from_pyobj(PyObject *obj){
        msg.apps[i] = (uint32_t) PyInt_AsLong(PyList_GetItem(py_apps, i)); 
     }
 
-    return msg;
+    len = device_apps__get_packed_size(&msg);
 
-}
+    buf = malloc(len);
+    device_apps__pack(&msg, (uint8_t *)buf);
 
-// Read iterator of Python dicts
-// Pack them to DeviceApps protobuf and write to file with appropriate header
-// Return number of written bytes as Python integer
-static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
-    PyObject *obj;
-    DeviceApps msg;
-    pbheader_t header = PBHEADER_INIT;
+    header.type = DEVICE_APPS_TYPE; 
+    header.length = len;
 
-    const char *path;
-    void *buf;
-    unsigned len, total_length=0;
+    gzwrite(fout, &header, sizeof(pbheader_t));
+    gzwrite(fout, buf, len);
+    total_length += len;
 
-    if (!PyArg_ParseTuple(args, "Os", &obj, &path))
-        return NULL;
+    free(msg.apps);
+    free(buf);
 
-    if (!PyIter_Check(obj)){
-        obj = PyObject_GetIter(obj);
-    } 
-    gzFile fout = gzopen(path, "wb");
-
-    while (true) {
-      PyObject *next = PyIter_Next(obj);
-      if (!next) {
-        // nothing left in the iterator
-        break;
-      }
-
-      msg = get_message_from_pyobj(next);
-      len = device_apps__get_packed_size(&msg);
-
-      buf = malloc(len);
-      device_apps__pack(&msg, (uint8_t *)buf);
-
-      header.type = DEVICE_APPS_TYPE; 
-      header.length = len;
-
-      gzwrite(fout, &header, sizeof(pbheader_t));
-      gzwrite(fout, buf, len);
-      total_length += len;
-
-      //Py_DECREF();
-
-      free(msg.apps);
-      free(buf);
-
+    Py_CLEAR(next_message);
      
     }
+    Py_CLEAR(messages);
 
     printf("Write to: %s\n", path);
     gzclose(fout);
+    
+    Py_XDECREF(messages);
+	Py_XDECREF(next_message);
     return Py_BuildValue("i", total_length); 
+error:
+    if(messages){
+        Py_XDECREF(messages);
+    }
+
+    if(next_message){
+        Py_XDECREF(next_message);
+    }
+    if(msg.apps){
+      free(msg.apps);
+    }
+    if(buf){
+      free(buf);
+    }
+    return NULL;
 }
 
 // Unpack only messages with type == DEVICE_APPS_TYPE
